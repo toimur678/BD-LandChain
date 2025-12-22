@@ -7,6 +7,7 @@ import LandSearch from './components/LandSearch';
 import AdminDashboard from './components/AdminDashboard';
 import GovtRecords from './components/GovtRecords';
 import TransactionStatus from './components/TransactionStatus';
+import ToastContainer from './components/ToastContainer';
 import { Home, PlusCircle, Search, Settings, Lock, Database } from 'lucide-react';
 import logo from './images/logo.png';
 import { ViewState } from './types';
@@ -136,6 +137,7 @@ const AppContent: React.FC = () => {
 
       {/* Floating Elements */}
       <TransactionStatus />
+      <ToastContainer />
     </div>
   );
 };

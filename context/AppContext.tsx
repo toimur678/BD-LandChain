@@ -1,7 +1,19 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { Language, WalletState, LandRecord, Transaction, ViewState } from '../types';
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from '../src/contractConfig';
+
+// Toast types for notifications
+export type ToastType = 'success' | 'error' | 'warning' | 'info';
+
+export interface ToastMessage {
+  id: string;
+  type: ToastType;
+  title: string;
+  message?: string;
+  txHash?: string;
+  duration?: number;
+}
 
 interface AppContextType {
   language: Language;
@@ -18,7 +30,12 @@ interface AppContextType {
   isLoading: boolean;
   recentTransactions: Transaction[];
   addTransaction: (tx: Transaction) => void;
+  updateTransactionStatus: (hash: string, status: 'confirmed' | 'failed', landUid?: string) => void;
   addLandRecord: (record: LandRecord) => void;
+  // Toast system
+  toasts: ToastMessage[];
+  showToast: (toast: Omit<ToastMessage, 'id'>) => void;
+  hideToast: (id: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -29,11 +46,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [landRecords, setLandRecords] = useState<LandRecord[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [wallet, setWallet] = useState<WalletState>({
     address: null,
     balance: '0',
     isConnected: false
   });
+
+  // Toast functions
+  const showToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
+    const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    const newToast = { ...toast, id };
+    setToasts(prev => [...prev, newToast]);
+
+    // Auto-dismiss after duration (default 5 seconds, 8 for success with tx)
+    const duration = toast.duration || (toast.txHash ? 8000 : 5000);
+    setTimeout(() => {
+      hideToast(id);
+    }, duration);
+  }, []);
+
+  const hideToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   // Check for existing wallet connection
   useEffect(() => {
@@ -52,7 +87,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const connectWallet = async () => {
     if (!window.ethereum) {
-        alert("Please install MetaMask!");
+        showToast({
+          type: 'error',
+          title: 'MetaMask Required',
+          message: 'Please install MetaMask browser extension to continue.'
+        });
         return;
     }
     try {
@@ -120,7 +159,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     
     // 1. Validation: Ensure Area is greater than 0 to prevent contract reverts
     if (!data.areaValue || Number(data.areaValue) <= 0) {
-        alert("Please enter a valid area size.");
+        showToast({
+          type: 'error',
+          title: 'Validation Error',
+          message: 'Please enter a valid area size.'
+        });
         return false;
     }
 
@@ -132,6 +175,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const gpsString = `${data.lat},${data.lng}`;
         // Generate a random IPFS hash if one wasn't provided (for demo purposes)
         const mockIpfsHash = "Qm" + Math.random().toString(36).substring(7);
+        
+        // Add a unique timestamp suffix to surveyNo to allow multiple registrations
+        // of the same land by different owners (same property can be sold to multiple people)
+        const uniqueSurveyNo = `${data.surveyNo}-${Date.now().toString(36)}`;
 
         // 2. THE FIX: Add Manual Gas Limit
         // We force the gas limit to 500,000 (standard write is ~200k) to prevent 
@@ -139,7 +186,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const tx = await contract.registerLand(
             data.division,
             data.district,
-            data.surveyNo,
+            uniqueSurveyNo,
             Number(data.areaValue), // Ensure this is not 0
             data.areaUnit,
             gpsString,
@@ -158,13 +205,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             timestamp: Date.now()
         });
 
-        await tx.wait(); 
+        // Wait for transaction confirmation
+        const receipt = await tx.wait();
+        
+        // Update transaction status to confirmed
+        updateTransactionStatus(tx.hash, 'confirmed');
+        
         await refreshRecords();
+        
+        // Show success toast
+        showToast({
+          type: 'success',
+          title: 'Land Registered Successfully',
+          message: 'Your land registration has been confirmed on the blockchain.',
+          txHash: tx.hash
+        });
+        
         return true;
-    } catch (error) {
+    } catch (error: any) {
         console.error("Registration failed:", error);
-        // Log the actual error to see if it's a specific contract revert
-        alert("Transaction Failed. Check console for details.");
+        
+        // Update transaction status to failed if we have a hash
+        const errorMessage = error?.reason || error?.message || 'Transaction failed. Please try again.';
+        
+        showToast({
+          type: 'error',
+          title: 'Registration Failed',
+          message: errorMessage.length > 100 ? errorMessage.substring(0, 100) + '...' : errorMessage
+        });
         return false;
     }
   };
@@ -176,25 +244,60 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
         const tx = await contract.verifyLand(uid);
+        
+        showToast({
+          type: 'info',
+          title: 'Verification Pending',
+          message: `Verifying land record ${uid}...`,
+          txHash: tx.hash
+        });
+        
         await tx.wait();
         await refreshRecords();
+        
+        showToast({
+          type: 'success',
+          title: 'Verification Complete',
+          message: `Land record ${uid} has been verified successfully.`,
+          txHash: tx.hash
+        });
+        
         return true;
-    } catch (error) {
+    } catch (error: any) {
         console.error("Verification failed:", error);
-        alert("Verification Failed. Only the 'Govt' wallet can verify records.");
+        
+        const errorMessage = error?.reason || 'Only the Government wallet can verify records.';
+        
+        showToast({
+          type: 'error',
+          title: 'Verification Failed',
+          message: errorMessage
+        });
         return false;
     }
   };
 
   // Helpers for compatibility with existing components
   const addTransaction = (tx: Transaction) => setRecentTransactions(prev => [tx, ...prev]);
+  
+  const updateTransactionStatus = (hash: string, status: 'confirmed' | 'failed', landUid?: string) => {
+    setRecentTransactions(prev => 
+      prev.map(tx => 
+        tx.hash === hash 
+          ? { ...tx, status, ...(landUid ? { landUid } : {}) }
+          : tx
+      )
+    );
+  };
+  
   const addLandRecord = (record: LandRecord) => setLandRecords(prev => [record, ...prev]);
 
   return (
     <AppContext.Provider value={{
       language, toggleLanguage, wallet, connectWallet, disconnectWallet,
       currentView, setCurrentView, landRecords, refreshRecords,
-      registerLand, verifyRecord, isLoading, recentTransactions, addTransaction, addLandRecord
+      registerLand, verifyRecord, isLoading, recentTransactions, addTransaction, updateTransactionStatus, addLandRecord,
+      toasts, showToast, hideToast
     }}>
       {children}
     </AppContext.Provider>

@@ -18,11 +18,18 @@ const AdminDashboard: React.FC = () => {
     <div className="space-y-8 animate-fade-in relative">
         {/* Modal for Detailed View */}
        {selectedRecord && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] p-6 max-w-2xl w-full relative max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200">
+        <div 
+            className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200"
+            onClick={() => setSelectedRecord(null)}
+        >
+            <div 
+                className="bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] p-6 max-w-2xl w-full relative max-h-[85vh] overflow-y-auto animate-in zoom-in-95 duration-200"
+                onClick={(e) => e.stopPropagation()}
+            >
                 <button 
                     onClick={() => setSelectedRecord(null)}
-                    className="absolute top-4 right-4 p-2 hover:bg-red-100 border-2 border-transparent hover:border-black transition-all rounded-full"
+                    className="absolute top-4 right-4 p-2 bg-white hover:bg-red-100 border-2 border-black hover:border-red-500 transition-all z-10"
+                    title="Close"
                 >
                     <X size={24} />
                 </button>
