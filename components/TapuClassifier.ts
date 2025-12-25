@@ -14,68 +14,54 @@ import * as tf from '@tensorflow/tfjs';
  * 7. Softmax (Probability Output)
  */
 
-export const createTapuModel = () => {
-  const model = tf.sequential();
+let cachedModel: tf.LayersModel | null = null;
+let tapuClassIndex = 0; // Teachable Machine keeps class order; assume first class is "Tapu"
 
-  // Layer 1: Convolution (Extract features from 64x64 RGB image)
-  model.add(tf.layers.conv2d({
-    inputShape: [64, 64, 3], 
-    filters: 16,
-    kernelSize: 3,
-    activation: 'relu', 
-    padding: 'same'
-  }));
+const loadTapuModel = async () => {
+  if (cachedModel) return cachedModel;
 
-  // Layer 2: Pooling (Reduce size, keep strongest features)
-  model.add(tf.layers.maxPooling2d({ poolSize: [2, 2] }));
+  // Attempt to load metadata to confirm label order (best-effort; optional file)
+  try {
+    const res = await fetch('/tapu-model/metadata.json');
+    if (res.ok) {
+      const metadata = await res.json();
+      if (Array.isArray(metadata.labels)) {
+        const idx = metadata.labels.findIndex(
+          (label: string) => label.toLowerCase() === 'tapu'
+        );
+        if (idx >= 0) tapuClassIndex = idx;
+      }
+    }
+  } catch {
+    // metadata is optional; fall back to default class order
+  }
 
-  // Layer 3: Deep Convolution
-  model.add(tf.layers.conv2d({
-    filters: 32,
-    kernelSize: 3,
-    activation: 'relu',
-  }));
-
-  // Layer 4: Pooling
-  model.add(tf.layers.maxPooling2d({ poolSize: [2, 2] }));
-
-  // Layer 5: Flatten
-  model.add(tf.layers.flatten());
-
-  // Layer 6: Fully Connected (Dense)
-  model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
-  
-  // Output Layer: Binary Classification (0 = Fake, 1 = Real Tapu)
-  model.add(tf.layers.dense({ units: 2, activation: 'softmax' }));
-
-  return model;
+  cachedModel = await tf.loadLayersModel('/tapu-model/model.json');
+  return cachedModel;
 };
 
-/**
- * SIMULATED PREDICTION FUNCTION
- * * In a full production app, we would load pre-trained weights here.
- * For this school project demo, we process the image tensor correctly
- * but return a simulated high confidence score to allow the demo to proceed.
- */
 export const verifyTapuWithCNN = async (imageElement: HTMLImageElement): Promise<number> => {
-  // 1. Convert DOM Image to Tensor (The format Deep Learning models need)
-  let tensor = tf.browser.fromPixels(imageElement)
-    .resizeNearestNeighbor([64, 64]) // Resize to match input layer
+  // Load (and cache) the Teachable Machine model exported to public/tapu-model/
+  const model = await loadTapuModel();
+
+  // Teachable Machine image models use 224x224 by default; adjust if your export differs.
+  const targetSize: [number, number] = [224, 224];
+
+  // Convert DOM image to normalized tensor
+  const tensor = tf.browser
+    .fromPixels(imageElement)
+    .resizeNearestNeighbor(targetSize)
     .toFloat()
-    .expandDims(); // Add batch dimension [1, 64, 64, 3]
+    .div(255)
+    .expandDims(); // [1, H, W, 3]
 
-  // 2. Normalize Pixel Values (0-255 -> 0-1)
-  // Essential for Neural Network convergence
-  tensor = tensor.div(255.0);
+  const prediction = model.predict(tensor) as tf.Tensor;
+  const probs = (await prediction.data()) as Float32Array;
 
-  // 3. Simulate Prediction (Mocking the forward pass)
-  // const prediction = model.predict(tensor) as tf.Tensor;
-  // const validScore = prediction.dataSync()[1];
-  
-  // Cleanup memory (Critical in JS-based ML)
+  // Clean up GPU/CPU memory
   tensor.dispose();
+  prediction.dispose();
 
-  // Return a "High Confidence" score (0.92 - 0.99) to simulate a match
-  // This proves to your prof you know how to handle the data pipeline.
-  return 0.96; 
+  // Return the probability of the "Tapu" class (fallback to 0 if not found)
+  return probs[tapuClassIndex] ?? 0;
 };
