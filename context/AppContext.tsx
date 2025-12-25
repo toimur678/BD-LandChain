@@ -96,6 +96,60 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     try {
         const provider = new ethers.BrowserProvider(window.ethereum);
+        
+        // Check if we're on Sepolia network (Chain ID: 11155111)
+        const network = await provider.getNetwork();
+        const chainId = Number(network.chainId);
+        
+        // If not on Sepolia, request network switch
+        if (chainId !== 11155111) {
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0xaa36a7' }], // 11155111 in hex
+                });
+                showToast({
+                    type: 'success',
+                    title: 'Network Switched',
+                    message: 'Connected to Sepolia Test Network'
+                });
+            } catch (switchError: any) {
+                // This error code indicates that the chain has not been added to MetaMask
+                if (switchError.code === 4902) {
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [{
+                                chainId: '0xaa36a7',
+                                chainName: 'Sepolia test network',
+                                nativeCurrency: {
+                                    name: 'ETH',
+                                    symbol: 'ETH',
+                                    decimals: 18
+                                },
+                                rpcUrls: ['https://sepolia.infura.io/v3/'],
+                                blockExplorerUrls: ['https://sepolia.etherscan.io']
+                            }]
+                        });
+                    } catch (addError) {
+                        showToast({
+                            type: 'error',
+                            title: 'Network Error',
+                            message: 'Please add Sepolia network to MetaMask manually.'
+                        });
+                        return;
+                    }
+                } else {
+                    showToast({
+                        type: 'warning',
+                        title: 'Wrong Network',
+                        message: 'Please switch to Sepolia Test Network in MetaMask.'
+                    });
+                    return;
+                }
+            }
+        }
+        
         const signer = await provider.getSigner();
         const address = await signer.getAddress();
         const balance = await provider.getBalance(address);
@@ -169,6 +223,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
         const provider = new ethers.BrowserProvider(window.ethereum);
+        
+        // Verify we're on Sepolia before attempting transaction
+        const network = await provider.getNetwork();
+        if (Number(network.chainId) !== 11155111) {
+            showToast({
+                type: 'error',
+                title: 'Wrong Network',
+                message: 'Please switch to Sepolia Test Network in MetaMask before submitting.'
+            });
+            return false;
+        }
+        
         const signer = await provider.getSigner();
         const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
